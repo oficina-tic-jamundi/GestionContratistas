@@ -1,0 +1,1 @@
+function e(e,t=`/`){return!e||!e.startsWith(`/`)||e.startsWith(`//`)||e.startsWith(`/\\`)||e.startsWith(`/login`)?t:e}export{e as t};

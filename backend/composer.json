@@ -1,0 +1,57 @@
+{
+    "name": "alcaldia-jamundi/sigcon-api",
+    "description": "SIGCON — API REST del Sistema de Gestión de Contratistas de la Alcaldía Municipal de Jamundí.",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": "~8.3.0 || ~8.4.0",
+        "ext-dom": "*",
+        "ext-fileinfo": "*",
+        "ext-gd": "*",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "ext-openssl": "*",
+        "ext-pdo": "*",
+        "ext-pdo_mysql": "*",
+        "dompdf/dompdf": "^3.1",
+        "monolog/monolog": "^3.12",
+        "php-di/php-di": "^7.1",
+        "slim/psr7": "^1.8",
+        "slim/slim": "^4.15",
+        "smalot/pdfparser": "^2.12",
+        "vlucas/phpdotenv": "^5.7"
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^2.2",
+        "phpunit/phpunit": "^12.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Sigcon\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Sigcon\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "platform": {
+            "php": "8.3.0"
+        },
+        "sort-packages": true,
+        "optimize-autoloader": true
+    },
+    "scripts": {
+        "serve": [
+            "Composer\\Config::disableProcessTimeout",
+            "@php -S 127.0.0.1:8080 -t public public/index.php"
+        ],
+        "test": [
+            "Composer\\Config::disableProcessTimeout",
+            "@php vendor/bin/phpunit"
+        ],
+        "analyse": "@php vendor/bin/phpstan analyse --memory-limit=512M",
+        "check": ["@analyse", "@test"]
+    }
+}

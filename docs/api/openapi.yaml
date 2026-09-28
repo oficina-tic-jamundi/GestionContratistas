@@ -1,0 +1,1783 @@
+openapi: 3.1.0
+info:
+  title: SIGCON API
+  version: 0.1.0
+  description: |
+    API REST del Sistema de Gestión de Contratistas — Alcaldía Municipal de Jamundí.
+
+    **Autenticación**: cookie de sesión `HttpOnly` (`__Host-sigcon_session` en producción,
+    `sigcon_session` en desarrollo) obtenida con `POST /auth/login`. Ver ADR-002.
+
+    **CSRF**: toda petición POST/PUT/PATCH/DELETE autenticada debe enviar la cabecera
+    `X-CSRF-Token` con el `csrf_token` recibido en login / `GET /auth/me`. Además, el servidor
+    rechaza cualquier petición que modifique datos con un `Origin` distinto al de la aplicación.
+
+    **Contraseña temporal**: mientras `must_change_password` sea `true`, solo se permiten
+    `/auth/me`, `/auth/logout` y `/auth/password`; el resto responde 403 `password_change_required`.
+
+    Formato de respuesta, paginación y errores: `docs/api/conventions.md`.
+servers:
+  - url: /api/v1
+security:
+  - sessionCookie: []
+
+tags:
+  - name: Sistema
+  - name: Autenticación
+  - name: Usuarios
+  - name: Roles
+  - name: Auditoría
+  - name: Dependencias
+  - name: Contratistas
+  - name: Contratos
+  - name: Obligaciones y avance
+  - name: Documentos
+  - name: Informes
+  - name: Evidencias
+  - name: Pagos
+  - name: Tablero
+
+paths:
+  /health:
+    get:
+      tags: [Sistema]
+      summary: Estado del servicio
+      security: []
+      responses:
+        '200':
+          description: Operativo
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: Degradado (ej. base de datos no disponible). Mismo formato con `status = degraded`.
+
+  /auth/login:
+    post:
+      tags: [Autenticación]
+      summary: Iniciar sesión
+      description: |
+        Mismo mensaje para correo inexistente y contraseña incorrecta (anti-enumeración).
+        Límite: 5 fallos por cuenta o 30 por IP en 15 minutos → 429 con `Retry-After`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, maxLength: 191 }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Sesión iniciada. Establece la cookie de sesión.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: 'sigcon_session=…; Path=/; Max-Age=36000; HttpOnly; SameSite=Lax[; Secure]'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { $ref: '#/components/schemas/AuthProfile' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/OriginNotAllowed' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/me:
+    get:
+      tags: [Autenticación]
+      summary: Perfil de la sesión actual (usuario, permisos y token CSRF)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { $ref: '#/components/schemas/AuthProfile' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /auth/logout:
+    post:
+      tags: [Autenticación]
+      summary: Cerrar sesión (revoca la sesión en el servidor y borra la cookie)
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      responses:
+        '200': { description: Sesión cerrada }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/CsrfInvalid' }
+
+  /auth/password:
+    post:
+      tags: [Autenticación]
+      summary: Cambiar la contraseña propia
+      description: |
+        Política: 12–128 caracteres, no común, no contiene el usuario del correo.
+        Revoca TODAS las sesiones del usuario y crea una nueva (nueva cookie y nuevo `csrf_token`).
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string, format: password }
+                new_password: { type: string, format: password, minLength: 12, maxLength: 128 }
+      responses:
+        '200':
+          description: Contraseña actualizada
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { $ref: '#/components/schemas/AuthProfile' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/CsrfInvalid' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /users:
+    get:
+      tags: [Usuarios]
+      summary: Listar usuarios
+      description: 'Permiso: `users.view`.'
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { name: search, in: query, schema: { type: string, maxLength: 100 }, description: Nombre, apellido o correo }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/UserStatus' } }
+        - { name: role, in: query, schema: { type: string }, description: Código de rol }
+        - { name: department, in: query, schema: { type: string, format: uuid } }
+        - { name: sort, in: query, schema: { type: string, enum: [name, email, created_at, last_login_at], default: name } }
+        - { $ref: '#/components/parameters/Direction' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/User' } }
+                      meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Usuarios]
+      summary: Crear usuario
+      description: |
+        Permiso: `users.create` (y `users.assign_roles` si se envían roles).
+        El sistema genera una contraseña temporal de 16 caracteres que se devuelve UNA sola vez;
+        el usuario deberá cambiarla en su primer inicio de sesión.
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserInput' }
+      responses:
+        '201':
+          description: Creado
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { $ref: '#/components/schemas/UserWithTemporaryPassword' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /users/{uuid}:
+    parameters: [{ $ref: '#/components/parameters/UserUuid' }]
+    get:
+      tags: [Usuarios]
+      summary: Consultar usuario
+      description: 'Permiso: `users.view`.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Usuarios]
+      summary: Modificar usuario (parcial)
+      description: |
+        Datos personales: permiso `users.update`. Roles: permiso `users.assign_roles`.
+        Reglas (409): nadie modifica sus propios roles; siempre debe quedar un administrador activo.
+        Los cambios de roles aplican de inmediato (los permisos se leen en cada petición).
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                first_name: { type: string, maxLength: 100 }
+                last_name: { type: string, maxLength: 100 }
+                email: { type: string, format: email }
+                phone: { type: [string, 'null'], maxLength: 30 }
+                roles: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: Actualizado
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /users/{uuid}/activate:
+    parameters: [{ $ref: '#/components/parameters/UserUuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Usuarios]
+      summary: Activar usuario
+      description: 'Permiso: `users.deactivate`. Idempotente.'
+      responses:
+        '200': { description: Activo }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /users/{uuid}/deactivate:
+    parameters: [{ $ref: '#/components/parameters/UserUuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Usuarios]
+      summary: Desactivar usuario
+      description: |
+        Permiso: `users.deactivate`. Cierra de inmediato todas sus sesiones. Idempotente.
+        409 si es la propia cuenta o el último administrador activo.
+      responses:
+        '200': { description: Inactivo }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /users/{uuid}/reset-password:
+    parameters: [{ $ref: '#/components/parameters/UserUuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Usuarios]
+      summary: Restablecer contraseña
+      description: |
+        Permiso: `users.reset_password`. Genera una contraseña temporal (se devuelve una sola vez),
+        cierra todas las sesiones del usuario. 409 si es la propia cuenta.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { $ref: '#/components/schemas/UserWithTemporaryPassword' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /roles:
+    get:
+      tags: [Roles]
+      summary: Listar roles con permisos y número de usuarios
+      description: 'Permiso: `roles.view`.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Role' } }
+    post:
+      tags: [Roles]
+      summary: Crear rol
+      description: 'Permiso: `roles.manage`. El código es inmutable.'
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/RoleInput'
+                - required: [code]
+                  properties:
+                    code: { type: string, pattern: '^[a-z][a-z0-9_]{1,49}$' }
+      responses:
+        '201': { description: Creado }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /roles/{code}:
+    parameters:
+      - { name: code, in: path, required: true, schema: { type: string } }
+    put:
+      tags: [Roles]
+      summary: Modificar nombre, descripción y permisos
+      description: 'Permiso: `roles.manage`. Los permisos del rol `admin` no se modifican (409).'
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoleInput' }
+      responses:
+        '200': { description: Actualizado }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Roles]
+      summary: Eliminar rol
+      description: 'Permiso: `roles.manage`. Solo roles no del sistema y sin usuarios (409).'
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      responses:
+        '200': { description: Eliminado }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /permissions:
+    get:
+      tags: [Roles]
+      summary: Catálogo de permisos
+      description: 'Permiso: `roles.view`.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/PermissionDefinition' } }
+
+  /audit-logs:
+    get:
+      tags: [Auditoría]
+      summary: Consultar el registro de auditoría (más reciente primero)
+      description: 'Permiso: `audit.view`. Fechas `from`/`to` son días en America/Bogota; `to` es inclusivo.'
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { name: action, in: query, schema: { type: string }, description: 'Prefijo de acción, ej. `user.` o `auth.login.failed`' }
+        - { name: user, in: query, schema: { type: string, format: uuid }, description: Usuario que realizó la acción }
+        - { name: entity_type, in: query, schema: { type: string } }
+        - { name: entity_id, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+                      meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /audit-logs/actions:
+    get:
+      tags: [Auditoría]
+      summary: Catálogo de acciones auditables (código → etiqueta)
+      description: 'Permiso: `audit.view`.'
+      responses:
+        '200': { description: OK }
+
+  /departments:
+    get:
+      tags: [Dependencias]
+      summary: Listar dependencias (catálogo completo, con contratos en ejecución)
+      description: 'Permiso: `departments.view`, `contracts.manage` o `users.view`.'
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/ActiveStatus' } }
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Dependencias]
+      summary: Crear dependencia
+      description: 'Permiso: `departments.manage`. Código y nombre únicos.'
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/DepartmentInput' } } }
+      responses:
+        '201': { description: Creada }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /departments/{uuid}:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    put:
+      tags: [Dependencias]
+      summary: Modificar dependencia
+      description: 'Permiso: `departments.manage`.'
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/DepartmentInput' } } }
+      responses:
+        '200': { description: Actualizada }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /departments/{uuid}/activate:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Dependencias]
+      summary: Activar dependencia
+      description: 'Permiso: `departments.manage`. Idempotente.'
+      responses: { '200': { description: OK } }
+
+  /departments/{uuid}/deactivate:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Dependencias]
+      summary: Desactivar dependencia (no podrá asignarse a contratos ni usuarios nuevos)
+      description: 'Permiso: `departments.manage`. Idempotente.'
+      responses: { '200': { description: OK } }
+
+  /contractors:
+    get:
+      tags: [Contratistas]
+      summary: Listar contratistas
+      description: 'Permiso: `contractors.view`.'
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { name: search, in: query, schema: { type: string }, description: Nombre, documento o correo }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/ActiveStatus' } }
+        - { name: sort, in: query, schema: { type: string, enum: [name, document, created_at], default: name } }
+        - { $ref: '#/components/parameters/Direction' }
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Contratistas]
+      summary: Registrar contratista
+      description: |
+        Permiso: `contractors.manage`. Documento único por tipo; el NIT exige dígito de
+        verificación correcto (algoritmo DIAN). La cuenta vinculada (`user`) debe estar activa,
+        tener `contracts.view_own` y no estar vinculada a otro contratista.
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ContractorInput' } } }
+      responses:
+        '201': { description: Registrado }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /contractors/{uuid}:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Contratistas]
+      summary: Consultar contratista
+      description: 'Permiso: `contractors.view`.'
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Contratistas]
+      summary: Modificar contratista
+      description: 'Permiso: `contractors.manage`.'
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ContractorInput' } } }
+      responses:
+        '200': { description: Actualizado }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /contractors/{uuid}/activate:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Contratistas]
+      summary: Activar contratista
+      description: 'Permiso: `contractors.manage`.'
+      responses: { '200': { description: OK } }
+
+  /contractors/{uuid}/deactivate:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Contratistas]
+      summary: Desactivar contratista
+      description: 'Permiso: `contractors.manage`. No altera contratos en ejecución; el mensaje informa cuántos tiene.'
+      responses: { '200': { description: OK } }
+
+  /contracts:
+    get:
+      tags: [Contratos]
+      summary: Listar contratos (según el alcance del usuario)
+      description: |
+        Permiso: `contracts.view_all` (todos), `contracts.view_assigned` (los que supervisa)
+        o `contracts.view_own` (los propios, sin borradores). Ver ADR-012.
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { name: search, in: query, schema: { type: string }, description: Número, objeto, contratista o documento }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/ContractStatus' } }
+        - { name: department, in: query, schema: { type: string, format: uuid } }
+        - { name: contractor, in: query, schema: { type: string, format: uuid } }
+        - { name: supervisor, in: query, schema: { type: string, format: uuid } }
+        - { name: ending_before, in: query, schema: { type: string, format: date }, description: Terminan en o antes de esta fecha }
+        - { name: sort, in: query, schema: { type: string, enum: [number, start_date, end_date, value, contractor, created_at], default: start_date } }
+        - { name: direction, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Contract' } }
+                      meta: { $ref: '#/components/schemas/PaginationMeta' }
+    post:
+      tags: [Contratos]
+      summary: Registrar contrato en borrador
+      description: 'Permiso: `contracts.manage`. Contratista y dependencia activos; número único (también frente a borradores descartados).'
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ContractInput' } } }
+      responses:
+        '201': { description: Registrado en borrador }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /contracts/{uuid}:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Contratos]
+      summary: Consultar contrato
+      description: 'Incluye `actions`: acciones que el backend aceptaría ahora para el usuario. Fuera de alcance: 404.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - properties:
+                      data: { $ref: '#/components/schemas/Contract' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Contratos]
+      summary: Modificar borrador
+      description: 'Permiso: `contracts.manage`. Solo en estado `draft` (409 en otro estado).'
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ContractInput' } } }
+      responses:
+        '200': { description: Actualizado }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Contratos]
+      summary: Descartar borrador (retiro lógico)
+      description: 'Permiso: `contracts.manage`. Solo borradores (409 en otro estado).'
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      responses:
+        '200': { description: Descartado }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /contracts/{uuid}/transitions:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Contratos]
+      summary: Cambiar el estado del contrato
+      description: |
+        Permiso: `contracts.manage`. Transiciones permitidas y obligatoriedad de la observación
+        según ADR-012. 409 si la transición no es válida desde el estado actual; 422 si falta
+        la observación o el contrato no cumple requisitos para activarse (ej. sin supervisor).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/ContractStatus' }
+                comment: { type: [string, 'null'], maxLength: 2000 }
+      responses:
+        '200': { description: Estado actualizado }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /contracts/{uuid}/supervisor:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Contratos]
+      summary: Designar o cambiar supervisor
+      description: 'Permiso: `contracts.manage`. En contratos no borrador exige `comment`. El supervisor no puede ser el propio contratista.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [supervisor]
+              properties:
+                supervisor: { type: string, format: uuid }
+                comment: { type: [string, 'null'], maxLength: 2000 }
+      responses:
+        '200': { description: Actualizado }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /contracts/{uuid}/history:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Contratos]
+      summary: Historial de negocio del contrato (más reciente primero)
+      description: 'Mismo alcance que la consulta del contrato.'
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /supervisors:
+    get:
+      tags: [Contratos]
+      summary: Usuarios activos que pueden ser designados supervisores
+      description: 'Permiso: `contracts.manage`.'
+      responses:
+        '200': { description: OK }
+
+  /contracts/{uuid}/activities:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Obligaciones y avance]
+      summary: Árbol de obligaciones, tareas y subtareas con el avance calculado
+      description: |
+        Mismo alcance que el contrato. `can` indica qué acciones acepta el backend para el
+        usuario actual (manage_obligations, plan, record_progress). Ver ADR-013.
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /contracts/{uuid}/obligations:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Obligaciones y avance]
+      summary: Registrar obligación
+      description: 'Permiso: `contracts.manage`. Solo con el contrato en borrador (409 en otro estado).'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ActivityInput' } } }
+      responses:
+        '201': { description: Registrada }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /contracts/{uuid}/obligations/suggestions:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Obligaciones y avance]
+      summary: Proponer obligaciones leídas del contrato firmado
+      description: 'Permiso: `contracts.manage`. Solo lee (ADR-022): toma el último "Contrato firmado" en PDF vigente, extrae su texto y propone la lista de obligaciones específicas. No registra nada. 409 si el contrato no está en borrador, si no hay contrato firmado o si el PDF no tiene texto (escaneado, protegido o dañado).'
+      responses:
+        '200': { description: 'Propuesta: `document`, `items` (title, description), `warnings` (code, message) y `existing_obligations`' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /contracts/{uuid}/obligations/bulk:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Obligaciones y avance]
+      summary: Registrar varias obligaciones (todas o ninguna)
+      description: 'Permiso: `contracts.manage`. Contrato en borrador. Máximo 60. Los errores de validación indican el ítem (`items.N.campo`).'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items: { type: array, minItems: 1, maxItems: 60, items: { $ref: '#/components/schemas/ActivityInput' } }
+      responses:
+        '201': { description: Registradas }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /activities/{uuid}:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    get:
+      tags: [Obligaciones y avance]
+      summary: Ver una actividad con su contexto
+      description: 'Devuelve la actividad, su obligación, su elemento padre, sus hijos y el resumen del contrato. Alcance de contratos del usuario.'
+      responses:
+        '200': { description: Detalle de la actividad }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Obligaciones y avance]
+      summary: Modificar obligación, tarea o subtarea
+      description: 'Obligaciones: `contracts.manage` en borrador. Tareas/subtareas: `activities.plan` (administración o supervisor del contrato). El contratista no edita actividades.'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ActivityInput' } } }
+      responses:
+        '200': { description: Actualizado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+    delete:
+      tags: [Obligaciones y avance]
+      summary: Eliminar (solo hojas sin avances registrados)
+      responses:
+        '200': { description: Eliminado }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /activities/{uuid}/children:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Obligaciones y avance]
+      summary: Agregar tarea (a una obligación) o subtarea (a una tarea)
+      description: 'No se permite en subtareas ni en elementos con avances ya declarados (409).'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ActivityInput' } } }
+      responses:
+        '201': { description: Registrado }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /activities/{uuid}/progress:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Obligaciones y avance]
+      summary: Historial de avances declarados (más reciente primero)
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Obligaciones y avance]
+      summary: Declarar avance acumulado
+      description: |
+        Permiso: `activities.execute` y ser el contratista del contrato; contrato activo; solo en
+        hojas (el avance de los padres se calcula).
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [progress, note]
+              properties:
+                progress: { type: integer, minimum: 0, maximum: 100 }
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        '200': { description: Registrado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /activities/{uuid}/priority:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    put:
+      tags: [Obligaciones y avance]
+      summary: Asignar o quitar la prioridad (ADR-021)
+      description: |
+        Permiso: `contracts.manage`. Contrato en borrador, activo o suspendido. `null` quita la
+        prioridad. El contratista solo la consulta. Queda en la auditoría.
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                priority: { type: string, nullable: true, enum: [high, medium, low] }
+      responses:
+        '200': { description: Guardada }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /contracts/{uuid}/documents:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Documentos]
+      summary: Documentos del contrato (vigentes y retirados)
+      description: 'Mismo alcance que el contrato. Incluye `can_upload`, `max_mb`, tipos y `can_withdraw` por documento.'
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Documentos]
+      summary: Cargar documento (multipart/form-data)
+      description: |
+        `contracts.manage` o el contratista del contrato; no en contratos archivados. Validación:
+        extensión en lista blanca (pdf, jpg, jpeg, png, docx, xlsx), MIME real (finfo) acorde a la
+        extensión, contenido verificado, tamaño máximo y sin duplicados vigentes (ADR-014).
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, type]
+              properties:
+                file: { type: string, format: binary }
+                type: { type: string, description: Código del tipo de documento }
+                description: { type: string, maxLength: 255 }
+      responses:
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '201': { description: Cargado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { description: 'Archivo inválido (`invalid_file`) o validación (`validation_error`): códigos extension_not_allowed, content_mismatch, invalid_content, too_large, empty, duplicate' }
+
+  /documents/{uuid}/download:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Documentos]
+      summary: Descargar (streaming, autorizado y auditado)
+      parameters:
+        - { name: inline, in: query, schema: { type: string, enum: ['1'] }, description: 'Solo imágenes: mostrar en el navegador (aislado con CSP sandbox)' }
+      responses:
+        '200': { description: Archivo, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /documents/{uuid}/withdraw:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Documentos]
+      summary: Retirar documento (no se elimina)
+      description: '`contracts.manage` o quien lo cargó. Anexos de informe: solo quien lo anexó y con el informe editable. Motivo obligatorio (5–500 caracteres).'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 5, maxLength: 500 } } } } }
+      responses:
+        '200': { description: Retirado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /reports:
+    get:
+      tags: [Informes]
+      summary: Informes visibles para el usuario
+      description: 'Alcance del contrato. Los borradores ajenos se excluyen salvo con `contracts.view_all`. `status=pending_review` agrupa enviados, reenviados y en revisión.'
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { name: status, in: query, schema: { type: string, enum: [pending_review, draft, submitted, in_review, observed, resubmitted, approved, rejected] } }
+        - { name: contract, in: query, schema: { type: string, format: uuid } }
+        - { name: sort, in: query, schema: { type: string, enum: [updated_at, period, number] } }
+        - { name: direction, in: query, schema: { type: string, enum: [asc, desc] } }
+      responses:
+        '200': { description: OK (paginado) }
+
+  /contracts/{uuid}/reports:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Informes]
+      summary: Crear informe en borrador
+      description: '`reports.create` y ser el contratista del contrato (activo o terminado). Período dentro del plazo y sin cruce con otro informe no rechazado (ADR-015).'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [period_start, period_end], properties: { period_start: { type: string, format: date }, period_end: { type: string, format: date } } } } }
+      responses:
+        '201': { description: Creado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /reports/{uuid}:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Informes]
+      summary: Detalle con contenido vigente, versiones, revisiones y acciones posibles (`can`)
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Informes]
+      summary: Guardar contenido (borrador o con observaciones)
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                summary: '{ type: string, maxLength: 10000, nullable: true }'
+                contractor_notes: { type: string, maxLength: 5000, nullable: true }
+                items:
+                  type: array
+                  items: { type: object, required: [obligation, description], properties: { obligation: { type: string, format: uuid }, description: { type: string, maxLength: 5000 } } }
+      responses:
+        '200': { description: Guardado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /reports/{uuid}/submit:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Informes]
+      summary: Enviar al supervisor (crea una versión inmutable con huella SHA-256)
+      description: 'Requiere resumen (≥ 20 caracteres) y al menos una obligación descrita. Desde `observed` el estado pasa a `resubmitted`.'
+      responses:
+        '200': { description: Enviado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /reports/{uuid}/start-review:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Informes]
+      summary: Iniciar revisión (supervisor asignado, `reports.review`)
+      responses:
+        '200': { description: En revisión }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /reports/{uuid}/observe:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Informes]
+      summary: Solicitar correcciones (supervisor asignado, `reports.review`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comment: { type: string, maxLength: 5000, nullable: true }
+                observations:
+                  type: array
+                  maxItems: 50
+                  items: { type: object, required: [text], properties: { obligation: { type: string, format: uuid, nullable: true }, text: { type: string, maxLength: 5000 } } }
+      responses:
+        '200': { description: Con observaciones }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /reports/{uuid}/approve:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Informes]
+      summary: Aprobar la versión en revisión (supervisor asignado, `reports.approve`)
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { comment: { type: string, maxLength: 5000, nullable: true } } } } }
+      responses:
+        '200': { description: Aprobado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /reports/{uuid}/reject:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Informes]
+      summary: Rechazar (supervisor asignado, `reports.approve`; motivo obligatorio)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [comment], properties: { comment: { type: string, minLength: 10, maxLength: 5000 } } } } }
+      responses:
+        '200': { description: Rechazado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /reports/{uuid}/reopen:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Informes]
+      summary: Reabrir un informe aprobado (`reports.reopen`; motivo obligatorio)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 10, maxLength: 2000 } } } } }
+      responses:
+        '200': { description: Reabierto (con observaciones) }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /reports/{uuid}/versions/{version}:
+    parameters:
+      - { $ref: '#/components/parameters/Uuid' }
+      - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    get:
+      tags: [Informes]
+      summary: Contenido congelado de una versión, verificación de huella (`hash_valid`) y cambios frente a la anterior
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /reports/{uuid}/history:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Informes]
+      summary: Historial de negocio del informe
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /reports/{uuid}/composed-documents:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Informes]
+      summary: Crear el acta o el informe desde la actividad (PDF generado por el servidor)
+      description: 'Permiso: `reports.create`; solo el contratista del contrato con el informe en borrador o con observaciones (ADR-023). `template`: `acta` (fecha, hora, lugar, tema, asistentes, desarrollo, compromisos) o `informe` (fecha, actividades, resultados, observaciones). `photos`: hasta 20 anexos de imagen vigentes de ESTE informe, con descripción opcional. Devuelve el documento creado (tipo `acta` o `informe`). Errores de campos como `fields.<campo>`.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template, activity, fields]
+              properties:
+                template: { type: string, enum: [acta, informe] }
+                activity: { type: string, format: uuid }
+                fields: { type: object, additionalProperties: { type: string } }
+                photos:
+                  type: array
+                  maxItems: 20
+                  items:
+                    type: object
+                    required: [uuid]
+                    properties:
+                      uuid: { type: string, format: uuid }
+                      caption: { type: string, maxLength: 200 }
+      responses:
+        '201': { description: Documento creado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /reports/{uuid}/documents:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Informes]
+      summary: Anexos del informe
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Informes]
+      summary: Anexar documento (multipart; contratista autor, solo con el informe editable)
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, type]
+              properties:
+                file: { type: string, format: binary }
+                type: { type: string, enum: [report_annex, other] }
+                description: { type: string, maxLength: 255 }
+      responses:
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '201': { description: Anexado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /contracts/{uuid}/evidences:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Evidencias]
+      summary: Evidencias fotográficas del contrato (vigentes y retiradas)
+      description: 'Mismo alcance que el contrato. Incluye `can_capture`, `can_view_original`, `max_mb` y `can_withdraw` por evidencia. Nunca expone rutas físicas.'
+      parameters:
+        - { name: activity, in: query, schema: { type: string, format: uuid }, description: Filtrar por obligación, tarea o subtarea }
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /activities/{uuid}/evidences:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Evidencias]
+      summary: Registrar evidencia (multipart/form-data)
+      description: |
+        `evidence.capture` + contratista del contrato, con el contrato activo (ADR-016). Se envía la
+        foto ORIGINAL; el servidor valida, conserva el original y genera la copia oficial con marca de
+        agua (hora oficial del servidor) y la miniatura. `location_status=ok` exige coordenadas; un
+        estado de falla (`denied`, `unavailable`, `timeout`) no admite coordenadas. El servidor decide
+        si la precisión es baja.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [photo, location_status]
+              properties:
+                photo: { type: string, format: binary, description: 'JPEG, PNG o WebP' }
+                description: { type: string, maxLength: 500 }
+                location_status: { type: string, enum: [ok, denied, unavailable, timeout] }
+                latitude: { type: number, minimum: -90, maximum: 90 }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+                accuracy: { type: number, exclusiveMinimum: 0, description: Metros }
+                altitude: { type: number }
+                heading: { type: number, minimum: 0, maximum: 360 }
+                speed: { type: number, minimum: 0 }
+                location_captured_at: { type: string, format: date-time }
+                device_captured_at: { type: string, format: date-time, description: Informativa; la hora oficial es la del servidor }
+      responses:
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '201': { description: Registrada }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { description: 'Foto inválida (`invalid_file`: not_an_image, unsupported_format, invalid_content, too_large, too_many_pixels, empty) o validación (`validation_error`, incluye `duplicate`)' }
+
+  /evidences/{uuid}/image:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Evidencias]
+      summary: Imagen de la evidencia
+      description: '`official` y `thumbnail`: alcance del contrato. `original`: requiere `evidence.view_original` y cada consulta se audita.'
+      parameters:
+        - { name: variant, in: query, schema: { type: string, enum: [official, thumbnail, original], default: official } }
+        - { name: download, in: query, schema: { type: string, enum: ['1'] } }
+      responses:
+        '200': { description: Imagen, content: { image/jpeg: { schema: { type: string, format: binary } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /evidences/{uuid}/withdraw:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Evidencias]
+      summary: Retirar evidencia (no se elimina)
+      description: 'Quien la registró o `contracts.manage`; no en contratos archivados. Motivo obligatorio (5–500).'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 5, maxLength: 500 } } } } }
+      responses:
+        '200': { description: Retirada }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /reports/{uuid}/versions/{version}/pdf:
+    parameters:
+      - { $ref: '#/components/parameters/Uuid' }
+      - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    get:
+      tags: [Informes]
+      summary: PDF de una versión (generado en segundo plano; descarga auditada)
+      description: 'Mismo acceso que el informe. 409 mientras el PDF se genera o si su generación falló (ADR-017).'
+      responses:
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '200': { description: PDF, content: { application/pdf: { schema: { type: string, format: binary } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /jobs:
+    get:
+      tags: [Sistema]
+      summary: Tareas en segundo plano (`jobs.manage`)
+      description: 'Metadatos y último error; nunca el contenido (payload) del trabajo.'
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { name: status, in: query, schema: { type: string, enum: [pending, processing, completed, failed] } }
+      responses:
+        '200': { description: OK (paginado) }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /jobs/status:
+    get:
+      tags: [Sistema]
+      summary: Estado del procesador y conteos por estado (`jobs.manage`)
+      description: '`stale = true` si el Cron no ejecuta `jobs:run` hace más de JOBS_STALE_AFTER_MINUTES.'
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /jobs/{uuid}/retry:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Sistema]
+      summary: Reintentar una tarea fallida (`jobs.manage`, auditado)
+      responses:
+        '200': { description: Vuelve a pendiente con los intentos en cero }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /payments:
+    get:
+      tags: [Pagos]
+      summary: Pagos visibles para el usuario (alcance del contrato)
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Pagos]
+      summary: Registrar pago de un informe aprobado (`payments.manage`)
+      description: 'Valor en pesos (texto decimal); no puede superar el saldo disponible del contrato (ADR-018).'
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [report, amount], properties: { report: { type: string, format: uuid }, amount: { type: string, example: '2500000.00' }, notes: { type: string, maxLength: 1000 } } } } }
+      responses:
+        '201': { description: Creado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /contracts/{uuid}/budget:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Pagos]
+      summary: Valor, comprometido, pagado y disponible del contrato
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /payment-rules:
+    get:
+      tags: [Pagos]
+      summary: Reglas de elegibilidad con su configuración (`payments.configure`, `payments.manage` o `payments.approve`)
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /payment-rules/{code}:
+    parameters: [{ name: code, in: path, required: true, schema: { type: string } }]
+    put:
+      tags: [Pagos]
+      summary: Activar/desactivar y parametrizar una regla (`payments.configure`, auditado)
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [enabled], properties: { enabled: { type: boolean }, params: { type: object } } } } }
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /payments/{uuid}:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Pagos]
+      summary: 'Detalle: datos, saldo del contrato, última evaluación y acciones posibles (`can`)'
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Pagos]
+      summary: Modificar valor y notas (solo en preparación)
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [amount], properties: { amount: { type: string }, notes: { type: string, nullable: true } } } } }
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /payments/{uuid}/history:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      tags: [Pagos]
+      summary: Historial del pago
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /payments/{uuid}/evaluate:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    post:
+      tags: [Pagos]
+      summary: Evaluar elegibilidad (se guarda el resultado de todas las reglas)
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /payments/{uuid}/submit:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    post:
+      tags: [Pagos]
+      summary: Enviar a aprobación (reevalúa; si no es elegible responde 409 y la evaluación queda guardada)
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /payments/{uuid}/approve:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    post:
+      tags: [Pagos]
+      summary: Aprobar (`payments.approve`; reevalúa; quien registró o envió no puede aprobar)
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+
+  /payments/{uuid}/return:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    post:
+      tags: [Pagos]
+      summary: Devolver a preparación (`payments.approve`, motivo obligatorio)
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 10, maxLength: 1000 } } } } }
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /payments/{uuid}/paid:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    post:
+      tags: [Pagos]
+      summary: Registrar el pago efectuado (`payments.register`)
+      description: 'Registra un hecho externo; SIGCON no ejecuta pagos. Fecha no futura ni anterior a la aprobación.'
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [payment_date, payment_reference], properties: { payment_date: { type: string, format: date }, payment_reference: { type: string, minLength: 3, maxLength: 100 } } } } }
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /payments/{uuid}/cancel:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    post:
+      tags: [Pagos]
+      summary: Anular (en preparación o listo para aprobación; motivo obligatorio)
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 10, maxLength: 1000 } } } } }
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/BusinessRule' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /dashboard:
+    get:
+      tags: [Tablero]
+      summary: 'Tablero de inicio según permisos y alcance del usuario (ADR-019)'
+      responses:
+        '200':
+          description: |
+            Secciones contracts, reports, payments y system (según corresponda). Con
+            `activities.execute`, además `my_contracts`: por contrato propio, avance, estado
+            derivado de cada obligación y actividad (approved, in_review, observed, pending),
+            observaciones vigentes y `payment_notice` si la regla de avance mínimo está activa
+            (ADR-021).
+
+  /history:
+    get:
+      tags: [Tablero]
+      summary: Historial cronológico con el alcance del usuario (ADR-021)
+      description: |
+        Avances, evidencias y cambios de contratos, informes y pagos. La administración
+        (`contracts.view_all`) ve todo; el supervisor, los contratos que supervisa; el
+        contratista, los suyos y las decisiones del supervisor sobre sus informes.
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { name: type, in: query, schema: { type: string, enum: [progress, evidence, report, payment, contract] } }
+      responses:
+        '200': { description: OK (paginado, más reciente primero) }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /statistics/payments:
+    get:
+      tags: [Tablero]
+      summary: Esquema de pagos por contrato (ADR-021)
+      description: |
+        Permiso: `contracts.view_all` o `contracts.view_assigned`. Por contrato: meses de plazo,
+        avance, pagos pactados (`payment_count` del contrato), pagados, en trámite y cuántos
+        faltan. "Faltan" es null si el contrato no declara los pagos pactados.
+      responses:
+        '200': { description: 'OK: contracts y totals' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /notifications:
+    get:
+      tags: [Tablero]
+      summary: Notificaciones del usuario (más recientes primero)
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { name: unread, in: query, schema: { type: string, enum: ['1'] } }
+      responses:
+        '200': { description: OK (paginado) }
+
+  /notifications/unread-count:
+    get:
+      tags: [Tablero]
+      summary: Número de notificaciones sin leer
+      responses:
+        '200': { description: OK }
+
+  /notifications/read-all:
+    post:
+      tags: [Tablero]
+      summary: Marcar todas como leídas
+      parameters: [{ $ref: '#/components/parameters/Csrf' }]
+      responses:
+        '200': { description: OK }
+
+  /notifications/{uuid}/read:
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/Csrf' }]
+    post:
+      tags: [Tablero]
+      summary: Marcar una notificación propia como leída (idempotente)
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /exports/contracts:
+    get:
+      tags: [Tablero]
+      summary: CSV de contratos con avance y saldo (`exports.run`, alcance del usuario, auditado)
+      responses:
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '200': { description: 'CSV UTF-8 con BOM, separador ";"', content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /exports/payments:
+    get:
+      tags: [Tablero]
+      summary: CSV de pagos (`exports.run`, alcance del usuario, auditado)
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [draft, ready_for_approval, approved, paid, cancelled] } }
+      responses:
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '200': { description: 'CSV UTF-8 con BOM, separador ";"', content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-sigcon_session
+
+  parameters:
+    Csrf:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema: { type: string, pattern: '^[a-f0-9]{64}$' }
+    Uuid:
+      name: uuid
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    UserUuid:
+      name: uuid
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      name: per_page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+    Direction:
+      name: direction
+      in: query
+      schema: { type: string, enum: [asc, desc], default: asc }
+
+  responses:
+    Unauthenticated:
+      description: 'Sin sesión, sesión expirada o credenciales inválidas (`authentication_required`)'
+      content: { application/json: { schema: { $ref: '#/components/schemas/Failure' } } }
+    Forbidden:
+      description: 'Sin permiso (`forbidden`) o contraseña temporal pendiente (`password_change_required`)'
+      content: { application/json: { schema: { $ref: '#/components/schemas/Failure' } } }
+    CsrfInvalid:
+      description: 'Token CSRF ausente o inválido (`csrf_token_invalid`)'
+      content: { application/json: { schema: { $ref: '#/components/schemas/Failure' } } }
+    OriginNotAllowed:
+      description: 'Origen de la petición no permitido (`origin_not_allowed`)'
+      content: { application/json: { schema: { $ref: '#/components/schemas/Failure' } } }
+    NotFound:
+      description: 'No existe o no es visible para el usuario (`not_found`)'
+      content: { application/json: { schema: { $ref: '#/components/schemas/Failure' } } }
+    BusinessRule:
+      description: 'Regla de negocio (`business_rule_violation`)'
+      content: { application/json: { schema: { $ref: '#/components/schemas/Failure' } } }
+    ValidationError:
+      description: 'Datos inválidos (`validation_error`), con errores por campo'
+      content: { application/json: { schema: { $ref: '#/components/schemas/Failure' } } }
+    TooManyRequests:
+      description: 'Demasiados intentos (`too_many_requests`)'
+      headers:
+        Retry-After: { schema: { type: integer }, description: Segundos de espera }
+      content: { application/json: { schema: { $ref: '#/components/schemas/Failure' } } }
+
+  schemas:
+    Success:
+      type: object
+      required: [success, data, message, errors, meta]
+      properties:
+        success: { const: true }
+        data: {}
+        message: { type: [string, 'null'] }
+        errors: { type: array, maxItems: 0 }
+        meta: { type: object }
+    Failure:
+      type: object
+      required: [success, data, message, errors, meta]
+      properties:
+        success: { const: false }
+        data: { type: 'null' }
+        message: { type: string, description: Apto para mostrar al usuario }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: [string, 'null'] }
+              code: { type: string }
+              message: { type: string }
+        meta:
+          type: object
+          properties:
+            code: { type: string }
+            request_id: { type: string, description: Código de referencia para soporte (también en X-Request-Id) }
+    PaginationMeta:
+      type: object
+      properties:
+        pagination:
+          type: object
+          properties:
+            page: { type: integer }
+            per_page: { type: integer }
+            total: { type: integer }
+            total_pages: { type: integer }
+    Health:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        service: { type: string }
+        version: { type: string }
+        server_time: { type: string, format: date-time }
+        timezone: { type: string, example: America/Bogota }
+        checks:
+          type: object
+          properties:
+            database: { type: string, enum: [ok, unavailable] }
+    UserStatus:
+      type: string
+      enum: [active, inactive]
+    RoleRef:
+      type: object
+      properties:
+        code: { type: string }
+        name: { type: string }
+    User:
+      type: object
+      properties:
+        uuid: { type: string, format: uuid }
+        first_name: { type: string }
+        last_name: { type: string }
+        full_name: { type: string }
+        email: { type: string, format: email }
+        phone: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/UserStatus' }
+        status_label: { type: string }
+        must_change_password: { type: boolean }
+        roles: { type: array, items: { $ref: '#/components/schemas/RoleRef' } }
+        department: { type: [object, 'null'], properties: { uuid: { type: string }, code: { type: string }, name: { type: string } } }
+        last_login_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    UserInput:
+      type: object
+      required: [first_name, last_name, email]
+      properties:
+        first_name: { type: string, maxLength: 100 }
+        last_name: { type: string, maxLength: 100 }
+        email: { type: string, format: email, maxLength: 191 }
+        phone: { type: [string, 'null'], maxLength: 30 }
+        roles: { type: array, items: { type: string } }
+        department: { type: [string, 'null'], format: uuid, description: Dependencia activa }
+    UserWithTemporaryPassword:
+      type: object
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        temporary_password: { type: string, minLength: 16, maxLength: 16 }
+    AuthProfile:
+      type: object
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        permissions: { type: array, items: { type: string }, example: [users.view, audit.view] }
+        csrf_token: { type: string, pattern: '^[a-f0-9]{64}$' }
+    Role:
+      type: object
+      properties:
+        code: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        is_system: { type: boolean }
+        permissions_editable: { type: boolean }
+        permissions: { type: array, items: { type: string } }
+        user_count: { type: integer }
+    RoleInput:
+      type: object
+      required: [name, permissions]
+      properties:
+        name: { type: string, minLength: 3, maxLength: 100 }
+        description: { type: [string, 'null'], maxLength: 255 }
+        permissions: { type: array, items: { type: string } }
+    PermissionDefinition:
+      type: object
+      properties:
+        code: { type: string }
+        module: { type: string }
+        description: { type: string }
+    ActiveStatus:
+      type: string
+      enum: [active, inactive]
+    ContractStatus:
+      type: string
+      enum: [draft, active, suspended, terminated, liquidated, archived]
+    DepartmentInput:
+      type: object
+      required: [code, name]
+      properties:
+        code: { type: string, pattern: '^[A-Z0-9][A-Z0-9_-]{1,19}$', description: Se convierte a mayúsculas }
+        name: { type: string, minLength: 3, maxLength: 150 }
+    ContractorInput:
+      type: object
+      required: [person_type, document_type, document_number, name]
+      properties:
+        person_type: { type: string, enum: [natural, juridica] }
+        document_type: { type: string, enum: [CC, CE, PPT, PA, NIT], description: 'Persona jurídica: solo NIT' }
+        document_number: { type: string, description: Se aceptan puntos, espacios y guiones; se guarda sin ellos }
+        verification_digit: { type: [string, integer, 'null'], description: Obligatorio y verificado solo para NIT }
+        name: { type: string, minLength: 3, maxLength: 200 }
+        email: { type: [string, 'null'], format: email }
+        phone: { type: [string, 'null'] }
+        address: { type: [string, 'null'], maxLength: 200 }
+        user: { type: [string, 'null'], format: uuid, description: Cuenta SIGCON a vincular }
+    ContractInput:
+      type: object
+      required: [contract_number, object, contractor, department, start_date, end_date, total_value]
+      properties:
+        contract_number: { type: string, maxLength: 50 }
+        object: { type: string, minLength: 10, maxLength: 5000 }
+        contractor: { type: string, format: uuid }
+        department: { type: string, format: uuid }
+        supervisor: { type: [string, 'null'], format: uuid }
+        signed_at: { type: [string, 'null'], format: date, description: No posterior a start_date }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date, description: No anterior a start_date }
+        total_value: { type: string, pattern: '^\d{1,13}(\.\d{1,2})?$', description: 'COP, texto decimal sin separadores de miles' }
+        secop_url: { type: [string, 'null'], description: URL https }
+    Contract:
+      type: object
+      properties:
+        uuid: { type: string, format: uuid }
+        contract_number: { type: string }
+        object: { type: string }
+        status: { $ref: '#/components/schemas/ContractStatus' }
+        status_label: { type: string }
+        signed_at: { type: [string, 'null'], format: date }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        total_value: { type: string, example: '42000000.00' }
+        secop_url: { type: [string, 'null'] }
+        contractor: { type: object, properties: { uuid: { type: string }, name: { type: string }, document: { type: string } } }
+        department: { type: object, properties: { uuid: { type: string }, code: { type: string }, name: { type: string } } }
+        supervisor: { type: [object, 'null'], properties: { uuid: { type: string }, name: { type: string } } }
+        actions:
+          type: object
+          properties:
+            edit: { type: boolean }
+            delete: { type: boolean }
+            change_supervisor: { type: boolean }
+            transitions:
+              type: array
+              items:
+                type: object
+                properties:
+                  status: { $ref: '#/components/schemas/ContractStatus' }
+                  label: { type: string }
+                  requires_comment: { type: boolean }
+    ActivityInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 3, maxLength: 255 }
+        description: { type: [string, 'null'], maxLength: 5000 }
+        weight: { type: [string, number], description: 'Mayor que 0 y hasta 1000; por defecto 1' }
+        due_date: { type: [string, 'null'], format: date }
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        occurred_at: { type: string, format: date-time }
+        action: { type: string, example: user.deactivated }
+        action_label: { type: string }
+        entity_type: { type: [string, 'null'] }
+        entity_id: { type: [string, 'null'] }
+        user:
+          type: [object, 'null']
+          properties:
+            uuid: { type: string }
+            name: { type: string }
+            email: { type: string }
+        ip_address: { type: [string, 'null'] }
+        user_agent: { type: [string, 'null'] }
+        request_id: { type: [string, 'null'] }
+        metadata: { type: [object, 'null'] }

@@ -1,0 +1,1 @@
+import{A as e,C as t,G as n,M as r,Y as i,dt as a,p as o,v as s,y as c}from"./D2dIpjOa.js";import"./xihTtKlq.js";var l=r(`<a download=""><!></a>`);function u(r,u){var d=l();s(d,1,c(`rounded px-2 py-1 text-xs font-medium text-primary hover:bg-primary-soft`));var f=i(d);t(f,()=>u.children),a(d),n(()=>o(d,`href`,u.href)),e(r,d)}export{u as t};

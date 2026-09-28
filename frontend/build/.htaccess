@@ -1,0 +1,48 @@
+# SIGCON — frontend estático (SPA) en Apache/cPanel.
+# Se copia automáticamente al directorio build/ durante "npm run build".
+Options -Indexes -MultiViews
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Forzar HTTPS en producción
+    RewriteCond %{HTTPS} !=on
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https
+    RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1)
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+    # La API tiene su propio .htaccess en /api
+    RewriteRule ^api(/|$) - [L]
+
+    # Bloquear archivos ocultos
+    RewriteRule (^|/)\. - [F,L]
+
+    # Rutas de la SPA: si no es un archivo o directorio real, servir index.html
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.html [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    # camera y geolocation se permiten para el mismo origen (captura de evidencias).
+    Header always set Permissions-Policy "camera=(self), geolocation=(self), microphone=(), payment=(), usb=()"
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains" "expr=%{HTTPS} == 'on'"
+    Header always unset X-Powered-By
+
+    # index.html nunca en caché (para que los usuarios reciban siempre la última versión);
+    # los assets con hash en el nombre, caché larga.
+    <FilesMatch "index\.html$">
+        Header set Cache-Control "no-cache"
+    </FilesMatch>
+</IfModule>
+
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/javascript "access plus 1 year"
+    ExpiresByType application/javascript "access plus 1 year"
+    ExpiresByType text/css "access plus 1 year"
+</IfModule>

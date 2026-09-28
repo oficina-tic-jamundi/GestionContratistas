@@ -1,0 +1,1 @@
+import{n as e}from"./DVujVxdI.js";function t(t,n){return t instanceof e?t.errorsFor(n):[]}function n(t){return t?t instanceof e?t.kind===`validation`&&t.fieldErrors.length>0?`Revise los campos marcados.`:t.message:`Ocurrió un error inesperado.`:null}export{n,t};

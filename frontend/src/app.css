@@ -1,0 +1,444 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/plus-jakarta-sans';
+
+/*
+ * Sistema de diseño de SIGCON.
+ *
+ * Tema oscuro institucional: azul marino profundo, acento verde esmeralda y superficies de
+ * vidrio (glassmorphism). Los componentes usan estos tokens (bg-surface, text-muted, etc.),
+ * nunca colores sueltos: así el sistema se cambia en un solo lugar.
+ *
+ * Contraste: todas las combinaciones de texto cumplen WCAG 2.1 AA (≥ 4.5:1) sobre las
+ * superficies translúcidas, medido sobre las zonas más claras del fondo (Resolución 1519 de
+ * 2020). Los tonos "soft" son solo relleno; el texto encima siempre usa el tono fuerte.
+ */
+@theme {
+  --font-sans:
+    'Plus Jakarta Sans Variable', 'Segoe UI', system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+
+  /* --- Acento --- */
+  --color-primary: #34d399;
+  --color-primary-hover: #6ee7b7;
+  --color-primary-soft: rgb(16 185 129 / 0.14);
+  /* Relleno de botones principales; su texto es oscuro (on-primary) para cumplir contraste. */
+  --color-primary-strong: #10b981;
+  --color-on-primary: #06281e;
+
+  /* --- Superficies, de la más profunda a la más elevada --- */
+  --color-deep: #0b1628;
+  /* Fondo hundido: campos de formulario, celdas de encabezado, huecos. */
+  --color-canvas: rgb(2 6 23 / 0.35);
+  --color-field: rgb(51 65 85 / 0.55);
+  /* Tarjetas y paneles. */
+  --color-surface: rgb(30 41 59 / 0.6);
+  /* Barras fijas y menús: más opacas para que el contenido no se lea a través. */
+  --color-surface-strong: rgb(14 25 44 / 0.86);
+  --color-border: rgb(148 163 184 / 0.2);
+  --color-border-strong: rgb(148 163 184 / 0.32);
+  --color-backdrop: rgb(2 6 23 / 0.6);
+
+  /* --- Texto --- */
+  --color-ink: #f1f5f9;
+  --color-muted: #a1afc3;
+
+  /* --- Estados --- */
+  --color-success: #6ee7b7;
+  --color-success-soft: rgb(16 185 129 / 0.14);
+  --color-warning: #fcd34d;
+  --color-warning-soft: rgb(245 158 11 / 0.14);
+  /* Naranja: "Con observaciones" (8,3:1 o más sobre las superficies). */
+  --color-attention: #fdba74;
+  --color-attention-soft: rgb(249 115 22 / 0.14);
+  --color-danger: #fca5a5;
+  --color-danger-soft: rgb(239 68 68 / 0.14);
+  /* Relleno sólido para acciones destructivas e indicadores (texto blanco, 4.8:1). */
+  --color-danger-strong: #dc2626;
+  --color-info: #93c5fd;
+  --color-info-soft: rgb(59 130 246 / 0.14);
+
+  /* --- Curvatura: escala corta y coherente --- */
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+  --radius-3xl: 1.5rem;
+
+  /* --- Sombras: profundidad discreta, nunca dura --- */
+  --shadow-card: 0 1px 2px rgb(2 6 23 / 0.4), 0 12px 32px -18px rgb(2 6 23 / 0.9);
+  --shadow-pop: 0 24px 60px -24px rgb(2 6 23 / 0.95);
+  --shadow-glow: 0 8px 24px -8px rgb(16 185 129 / 0.55);
+
+  /* --- Movimiento: una sola curva y tres duraciones --- */
+  --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+    /* El encabezado fijo no debe tapar el destino de un enlace interno. */
+    scroll-padding-top: 5rem;
+  }
+
+  body {
+    @apply text-ink font-sans antialiased;
+    background-color: var(--color-deep);
+    background-image:
+      radial-gradient(70rem 45rem at 0% 0%, #13294b 0%, transparent 60%),
+      radial-gradient(60rem 40rem at 100% 100%, #0b3a2e 0%, transparent 55%);
+    background-attachment: fixed;
+    min-height: 100dvh;
+  }
+
+  /* Jerarquía tipográfica: títulos compactos y equilibrados, párrafos sin líneas huérfanas. */
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  /* Las cifras se comparan en columna: todas con el mismo ancho. */
+  .tabular-nums,
+  td,
+  th {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Foco visible y consistente para navegación por teclado. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-primary;
+  }
+
+  /* En táctil: sin retardo de 300 ms y sin destello gris al tocar (hay estado :active propio). */
+  a,
+  button,
+  label,
+  summary,
+  [role='button'],
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    background-color: rgb(52 211 153 / 0.35);
+  }
+
+  /* Barras de desplazamiento discretas, acordes al tema oscuro. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(148 163 184 / 0.35) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: rgb(148 163 184 / 0.3);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(148 163 184 / 0.5);
+  }
+
+  /* Diálogos y menús: el desplazamiento no se propaga a la página de atrás. */
+  dialog {
+    overscroll-behavior: contain;
+  }
+
+  /* Quien pide menos movimiento recibe los mismos cambios, sin transiciones. */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/*
+ * Vidrio: toda superficie (tarjetas, diálogos, menús) desenfoca lo que tiene detrás. Se aplica
+ * a la clase bg-surface para que el efecto sea uniforme sin repetirlo en cada componente.
+ */
+@utility bg-surface {
+  background-color: var(--color-surface);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+}
+
+@utility bg-surface-strong {
+  background-color: var(--color-surface-strong);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  backdrop-filter: blur(20px) saturate(140%);
+}
+
+/* --- Tipografía de la aplicación: un solo lugar define cada nivel --- */
+
+/** Título de pantalla (uno por página). */
+@utility title-page {
+  font-size: 1.5rem;
+  line-height: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
+}
+
+/** Título de tarjeta o sección dentro de la pantalla. */
+@utility title-section {
+  font-size: 1.0625rem;
+  line-height: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+
+/** Rótulo pequeño en versalitas sobre un grupo (menú, columnas, secciones). */
+@utility label-eyebrow {
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+/** Cifra principal de una tarjeta de estadística. */
+@utility value-kpi {
+  font-size: 1.75rem;
+  line-height: 2.125rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+}
+
+/* --- Tablas de datos --- */
+
+/**
+ * Tabla de datos con encabezado fijo al desplazar, filas con separación sutil y realce al
+ * pasar el puntero. Las columnas numéricas se marcan con `class="num"` en <th> y <td>.
+ */
+@utility data-table {
+  width: 100%;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+
+  & thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background-color: rgb(12 22 40 / 0.92);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    white-space: nowrap;
+    border-bottom: 1px solid var(--color-border-strong);
+  }
+
+  & tbody td {
+    padding: 0.8125rem 1rem;
+    vertical-align: top;
+    border-top: 1px solid var(--color-border);
+    color: var(--color-ink);
+  }
+
+  & tbody tr:first-child td {
+    border-top: 0;
+  }
+
+  & tbody tr {
+    transition: background-color var(--duration-fast) var(--ease-out-soft);
+  }
+
+  & tbody tr:hover {
+    background-color: rgb(148 163 184 / 0.07);
+  }
+
+  & .num {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .quiet {
+    color: var(--color-muted);
+  }
+}
+
+/* --- Movimiento --- */
+
+/** Entrada del contenido: sube unos píxeles y aparece. */
+@utility animate-rise {
+  animation: rise var(--duration-slow) var(--ease-out-soft) both;
+}
+
+/** Aparición simple, para superposiciones. */
+@utility animate-fade {
+  animation: fade-in var(--duration-base) var(--ease-out-soft) both;
+}
+
+/**
+ * Entrada escalonada de una lista de tarjetas: cada hijo directo entra un poco después.
+ * Solo los primeros ocho; a partir de ahí entran juntos para no hacer esperar al usuario.
+ */
+@utility stagger {
+  & > * {
+    animation: rise var(--duration-slow) var(--ease-out-soft) both;
+  }
+  & > *:nth-child(1) {
+    animation-delay: 0ms;
+  }
+  & > *:nth-child(2) {
+    animation-delay: 40ms;
+  }
+  & > *:nth-child(3) {
+    animation-delay: 80ms;
+  }
+  & > *:nth-child(4) {
+    animation-delay: 120ms;
+  }
+  & > *:nth-child(5) {
+    animation-delay: 160ms;
+  }
+  & > *:nth-child(6) {
+    animation-delay: 200ms;
+  }
+  & > *:nth-child(7) {
+    animation-delay: 240ms;
+  }
+  & > *:nth-child(8) {
+    animation-delay: 280ms;
+  }
+}
+
+/** Tarjeta que lleva a otra pantalla: se eleva un poco al pasar el puntero. */
+@utility card-interactive {
+  transition:
+    transform var(--duration-base) var(--ease-out-soft),
+    border-color var(--duration-base) var(--ease-out-soft),
+    background-color var(--duration-base) var(--ease-out-soft),
+    box-shadow var(--duration-base) var(--ease-out-soft);
+
+  &:hover {
+    transform: translateY(-2px);
+    border-color: rgb(52 211 153 / 0.4);
+    box-shadow: var(--shadow-card);
+  }
+
+  &:active {
+    transform: translateY(0);
+  }
+}
+
+/** Marcador de posición mientras llegan los datos. */
+@utility skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: rgb(148 163 184 / 0.12);
+  border-radius: var(--radius-lg);
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background-image: linear-gradient(90deg, transparent, rgb(148 163 184 / 0.16), transparent);
+    animation: shimmer 1.4s infinite;
+  }
+}
+
+/* Botón principal: degradado esmeralda como en la identidad visual. */
+@utility btn-primary {
+  background-image: linear-gradient(135deg, #34d399 0%, var(--color-primary-strong) 100%);
+  color: var(--color-on-primary);
+  box-shadow: var(--shadow-glow);
+}
+
+/* --- Zonas seguras del dispositivo (muesca y barra inferior del celular) --- */
+
+@utility px-safe {
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+}
+
+@utility pb-safe {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+/* --- Animaciones con nombre --- */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+/* Menú lateral en celular: se desliza desde la izquierda. */
+dialog.drawer[open] {
+  animation: drawer-in var(--duration-slow) var(--ease-out-soft);
+}
+
+dialog.drawer[open]::backdrop,
+dialog.modal[open]::backdrop {
+  animation: fade-in var(--duration-base) var(--ease-out-soft);
+}
+
+/* Diálogos centrados: entran con un impulso corto. */
+dialog.modal[open] {
+  animation: pop-in var(--duration-base) var(--ease-out-soft);
+}

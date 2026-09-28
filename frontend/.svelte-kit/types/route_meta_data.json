@@ -1,0 +1,150 @@
+{
+	"/(app)": [
+		"src/routes/(app)/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/": [
+		"src/routes/+layout.ts"
+	],
+	"/(app)/account/password": [
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/activities": [
+		"src/routes/(app)/activities/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/activities/[uuid]": [
+		"src/routes/(app)/activities/[uuid]/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/audit": [
+		"src/routes/(app)/audit/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/contractors": [
+		"src/routes/(app)/contractors/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/contractors/new": [
+		"src/routes/(app)/contractors/new/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/contractors/[uuid]": [
+		"src/routes/(app)/contractors/[uuid]/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/contracts": [
+		"src/routes/(app)/contracts/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/contracts/new": [
+		"src/routes/(app)/contracts/new/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/contracts/[uuid]": [
+		"src/routes/(app)/contracts/[uuid]/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/contracts/[uuid]/edit": [
+		"src/routes/(app)/contracts/[uuid]/edit/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/departments": [
+		"src/routes/(app)/departments/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/history": [
+		"src/routes/(app)/history/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/jobs": [
+		"src/routes/(app)/jobs/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/login": [
+		"src/routes/login/+page.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/notifications": [
+		"src/routes/(app)/notifications/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/payments": [
+		"src/routes/(app)/payments/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/payments/rules": [
+		"src/routes/(app)/payments/rules/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/payments/[uuid]": [
+		"src/routes/(app)/payments/[uuid]/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/reports": [
+		"src/routes/(app)/reports/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/reports/[uuid]": [
+		"src/routes/(app)/reports/[uuid]/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/roles": [
+		"src/routes/(app)/roles/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/roles/new": [
+		"src/routes/(app)/roles/new/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/roles/[code]": [
+		"src/routes/(app)/roles/[code]/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/statistics": [
+		"src/routes/(app)/statistics/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/users": [
+		"src/routes/(app)/users/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/users/new": [
+		"src/routes/(app)/users/new/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/(app)/users/[uuid]": [
+		"src/routes/(app)/users/[uuid]/+page.ts",
+		"src/routes/(app)/+layout.ts",
+		"src/routes/+layout.ts"
+	]
+}

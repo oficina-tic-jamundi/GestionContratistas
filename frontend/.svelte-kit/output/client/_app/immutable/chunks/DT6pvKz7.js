@@ -1,0 +1,1 @@
+import{t as e}from"./Bldua5gl.js";import{t}from"./CyVLSAeK.js";function n(...n){t.can(...n)||e(403,`No tiene permiso para acceder a esta sección.`)}function r(...n){t.canAny(...n)||e(403,`No tiene permiso para acceder a esta sección.`)}export{n,r as t};

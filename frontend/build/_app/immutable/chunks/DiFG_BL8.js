@@ -1,0 +1,1 @@
+function e(e){let t=e.meta.pagination;return{items:e.data,pagination:t??{page:1,per_page:e.data.length,total:e.data.length,total_pages:1}}}export{e as t};

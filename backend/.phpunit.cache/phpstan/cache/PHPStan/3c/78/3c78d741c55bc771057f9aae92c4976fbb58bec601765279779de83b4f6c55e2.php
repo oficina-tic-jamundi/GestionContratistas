@@ -1,0 +1,44 @@
+<?php declare(strict_types = 1);
+
+// phpinternal-PHPStan\BetterReflection\Reflection\ReflectionConstant-SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_KEYBYTES
+return \PHPStan\Cache\CacheItem::__set_state(array(
+   'variableKey' => 'v2-6.70.0.6-dev-master@709e512-8.3',
+   'data' => 
+  array (
+    'locatedSource' => 
+    array (
+      'class' => 'PHPStan\\BetterReflection\\SourceLocator\\Located\\InternalLocatedSource',
+      'data' => 
+      array (
+        'name' => 'SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_KEYBYTES',
+        'filename' => 'phpstorm-stubs:sodium/sodium.stub',
+        'extensionName' => 'sodium',
+        'aliasName' => NULL,
+      ),
+    ),
+    'name' => 'SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_KEYBYTES',
+    'shortName' => 'SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_KEYBYTES',
+    'value' => 
+    array (
+      'code' => '32',
+      'attributes' => 
+      array (
+        'startLine' => 4,
+        'endLine' => 4,
+        'startTokenPos' => 12,
+        'startFilePos' => 85,
+        'endTokenPos' => 12,
+        'endFilePos' => 86,
+      ),
+    ),
+    'docComment' => NULL,
+    'attributes' => 
+    array (
+    ),
+    'startLine' => 4,
+    'endLine' => 4,
+    'startColumn' => 5,
+    'endColumn' => 69,
+    'namespace' => NULL,
+  ),
+));

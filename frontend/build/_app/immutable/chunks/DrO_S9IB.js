@@ -1,0 +1,1 @@
+import{$ as e,et as t,tt as n,z as r}from"./D2dIpjOa.js";var i=new class{#e=n(e([]));get items(){return r(this.#e)}set items(e){t(this.#e,e,!0)}#t=1;show(e,t=`success`,n=5e3){let r=this.#t++;this.items.push({id:r,kind:t,message:e}),setTimeout(()=>this.dismiss(r),n)}dismiss(e){this.items=this.items.filter(t=>t.id!==e)}};export{i as t};

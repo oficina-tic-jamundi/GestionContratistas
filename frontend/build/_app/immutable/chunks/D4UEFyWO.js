@@ -1,0 +1,1 @@
+import{A as e,C as t,G as n,M as r,Y as i,dt as a,p as o}from"./D2dIpjOa.js";import"./xihTtKlq.js";var s=r(`<div class="overflow-x-auto focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none" tabindex="0" role="region"><!></div>`);function c(r,c){var l=s(),u=i(l);t(u,()=>c.children),a(l),n(()=>o(l,`aria-label`,c.label)),e(r,l)}export{c as t};
